@@ -1,0 +1,302 @@
+---
+title: "Grab Traffic Management Challenge"
+author: "Eng Xin Qian"
+date: "6/11/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Introduction
+
+This analysis has been written in R. Please refer to the libraries bellow to install the necessary packages if needed. This document is divided into 2 parts. The first part is the way the problem is approached. The second part is where the marker can test the test set on the model.
+
+
+### Part 1
+
+
+```{r}
+library(fpp2,quietly = TRUE)
+library(geohash, quietly=TRUE)
+library(tidyverse, quietly = TRUE)
+library(lubridate, quietly = TRUE)
+library(zoo, quietly = TRUE)
+library(timetk, quietly = TRUE)
+library(broom,quietly = TRUE)
+library(sweep,quietly = TRUE)
+library(tidyr,quietly = TRUE)
+library(tsibble, quietly = TRUE)
+
+```
+
+```{r}
+data<-read.csv("training.csv") # This is reading the data set provided
+
+```
+
+```{r}
+lat_lon<-data.frame()
+
+for (i in data["geohash6"]){
+  lat_lon<-rbind(gh_decode(i))
+}
+
+# This chunk decode the geohash into latitude and longtitude
+```
+
+```{r}
+data$latitude<-lat_lon$lat
+data$longtitude<-lat_lon$lng
+data$geohash6<-NULL
+
+# This chunk add latitude and longtitude to the original dataframe and removes the geohash6 column
+```
+
+
+```{r}
+data %>% 
+  ggplot(aes(data$demand))+
+  geom_histogram() +
+  xlab("Demand")
+
+data %>% 
+  ggplot(aes(data$day))+
+  geom_histogram()+
+  xlab("Day")
+
+data %>% 
+  ggplot(aes(data$latitude))+
+  geom_histogram()+
+  xlab("Latitude")
+
+data %>% 
+  ggplot(aes(data$longtitude))+
+  geom_histogram()+
+  xlab("Longtitude")
+
+# These are the various histograms drawn to illustrate the distribution of the variables. The Demand variable does not behave very well. The rest of the variables are alright.
+```
+
+```{r}
+unique(data$latitude)
+unique(data$longtitude)
+
+unique(data$latitude) %>% length()
+unique(data$longtitude) %>% length()
+
+table(data$latitude)
+table(data$longtitude)
+
+# There is a limited number of latitude and longtitude. 
+```
+
+```{r}
+data %>%
+  ggplot(aes(x=latitude,y=longtitude))+
+  geom_tile(aes(fill = demand),colour = "white") +
+  scale_fill_gradient(low = "white",high = "steelblue")
+
+# This shows that the places with the highest amount of demand is concentrated in a few areas.
+
+```
+
+
+```{r}
+cluster<-kmeans(data[,3:4],2000)
+
+data$cluster<-as.factor(cluster$cluster)
+
+# Clustering is applied to capture the latitude and longtitude effects. The number 2000 was arrived by iteration, different numbers were used before 2000 was decided. 
+
+```
+
+
+```{r}
+hour_minutes<-(hm(data$timestamp))
+
+hour<-slot(hour_minutes,"hour")
+minute<-slot(hour_minutes,"minute")
+
+data$hour<-hour
+data$minute<-minute
+
+data$date<-with(data,make_datetime(year=2019,month=4,day,hour,minute))
+
+data$timestamp<-NULL
+data$hour<-NULL
+data$minute<-NULL
+data$latitude<-NULL
+data$longtitude<-NULL
+data$day<-NULL
+
+train<- data %>% filter(date<ymd_hms("2019-05-31 22:30:00"))
+test<- data %>% filter(date>ymd_hms("2019-05-31 22:30:00"))
+
+# This chunk breaks the timestamp into a date time format. I assumed the first day starts on 1st of April, the reason april was chosen is that the amount of days is constant regardless of the year. Also april has 30 days and may has 31 days. This represents the number of days in the dataset.
+
+```
+
+```{r}
+train %>% group_by(cluster) %>% nest(.key = "data.tbl") -> tib
+
+# By grouping by cluster, an assumption is made that each location is independent of each other and there is a seperate time series for each location.
+
+tib %>% mutate(data.ts=map(.x=data.tbl, 
+                           .f= tk_ts,
+                           select= -date,
+                           start=2019, 
+                           freq=35112))->tib_ts 
+
+
+tib_ts %>% mutate(fit.stlf = map(data.ts, snaive))-> tib_ts_fit
+
+tib_ts_fit %>%
+  mutate(fcast.stlf = map(fit.stlf, forecast, h = 5))-> tib_ts_fcast # The 5 is chosen here because of the competition requirements. This represents forecasting 5 steps ahead, where each step is 15 minutes intervals
+
+tib_ts_fcast %>%
+  mutate(sweep = map(fcast.stlf, sw_sweep, fitted = FALSE,timetk_idx = TRUE)) %>%
+  unnest(sweep)-> tib_ts_fcast_tidy
+
+# This chunk is the model part, snaive was the chosen model because there is seasonality in the data. This dataset is also quite big, using a simple method reduces the computation time. 
+```
+
+```{r}
+tib_ts_fcast_tidy %>%
+  filter(cluster == 8) %>%
+  ggplot(aes(x = index, y = demand, color = key, group = cluster)) +
+  geom_line()
+
+# This visualized the forecast for a given cluster. There are over 2000 clusters.
+```
+
+
+```{r}
+projections<-tib_ts_fcast_tidy%>% filter(key=="forecast")
+
+
+error_tbl <- inner_join(projections, test, by = c("index" = "date","cluster"="cluster")) %>%
+  rename(date=index,actual = demand.y, pred = demand.x) %>%
+  select(date, actual, pred,cluster,cluster) %>%
+  mutate(
+    error = sqrt((actual - pred)^2)) 
+
+error_tbl$error %>% mean()
+
+# The forecasts are placed into the projections variable. Then an inner join is performed on the projections and the test set defined earlier. The inner join is based on the date and cluster, rows from the 2 variables match, the RMSE is calculated. The last line in this chunk is to calculated the average RMSE.
+
+# Note that the error_tbl will have a different length compared to the projections and test set. The reason is not all clusters have data until the time 22:30:00. 
+
+```
+
+This concludes the first part of the analysis. The second part is below. 
+
+### Part 2
+
+
+The analysis below is the same as the above, the variable names are the same. The only difference is the full_data variable. The full_data should consists of both the training data set provided and the test set to test the performance of the model.
+
+```{r}
+data<-read.csv("training.csv") # This is the data set provided to us
+
+testing<-read.csv("testing.csv") # This is where you put the dataset, when you want to test the model
+
+# Then merge both the data set provided to us with the testing dataset
+
+full_data<-merge(data,testing) # After the merge, use the merged dataset for the rest of the analysis. The transformations applied further down is the same as the above.
+
+# I made a few assumptions of the testing data set that will be used. In the sense that the format and the structure of the data set will be the same. 
+```
+
+```{r}
+lat_lon<-data.frame()
+
+for (i in full_data["geohash6"]){
+  lat_lon<-rbind(gh_decode(i))
+}
+
+# This chunk decode the geohash into latitude and longtitude
+```
+
+```{r}
+full_data$latitude<-lat_lon$lat
+full_data$longtitude<-lat_lon$lng
+full_data$geohash6<-NULL
+
+# This chunk add latitude and longtitude to the original dataframe and removes the geohash6 column
+```
+
+```{r}
+cluster<-kmeans(full_data[,3:4],2000)
+
+full_data$cluster<-as.factor(cluster$cluster)
+
+```
+
+
+```{r}
+hour_minutes<-(hm(full_data$timestamp))
+
+hour<-slot(hour_minutes,"hour")
+minute<-slot(hour_minutes,"minute")
+
+full_data$hour<-hour
+full_data$minute<-minute
+
+full_data$date<-with(full_data,make_datetime(year=2019,month=4,day,hour,minute))
+
+full_data$timestamp<-NULL
+full_data$hour<-NULL
+full_data$minute<-NULL
+full_data$latitude<-NULL
+full_data$longtitude<-NULL
+full_data$day<-NULL
+
+train<- full_data %>% filter(date<ymd_hms("2019-05-31 22:30:00"))
+test<- full_data %>% filter(date>ymd_hms("2019-05-31 22:30:00"))
+
+# The date provided here to seperate the train and test dataset is 5 time periods. Where each period is 15 minutes. The dates here is based on previous assumptions.
+
+```
+
+```{r}
+train %>% group_by(cluster) %>% nest(.key = "data.tbl") -> tib
+
+
+tib %>% mutate(data.ts=map(.x=data.tbl, 
+                           .f= tk_ts,
+                           select= -date,
+                           start=2019, 
+                           freq=35112))->tib_ts 
+
+
+tib_ts %>% mutate(fit.stlf = map(data.ts, snaive))-> tib_ts_fit
+
+tib_ts_fit %>%
+  mutate(fcast.stlf = map(fit.stlf, forecast, h = 5))-> tib_ts_fcast
+
+tib_ts_fcast %>%
+  mutate(sweep = map(fcast.stlf, sw_sweep, fitted = FALSE,timetk_idx = TRUE)) %>%
+  unnest(sweep)-> tib_ts_fcast_tidy
+```
+
+```{r}
+tib_ts_fcast_tidy %>%
+  filter(cluster == 8) %>%
+  ggplot(aes(x = index, y = demand, color = key, group = cluster)) +
+  geom_line()
+```
+
+```{r}
+projections<-tib_ts_fcast_tidy%>% filter(key=="forecast")
+
+
+error_tbl <- inner_join(projections, test, by = c("index" = "date","cluster"="cluster")) %>%
+  rename(date=index,actual = demand.y, pred = demand.x) %>%
+  select(date, actual, pred,cluster,cluster) %>%
+  mutate(
+    error = sqrt((actual - pred)^2)) 
+
+error_tbl$error %>% mean()
+```
