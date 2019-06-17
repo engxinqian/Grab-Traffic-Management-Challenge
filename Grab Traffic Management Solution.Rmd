@@ -256,7 +256,7 @@ full_data$day<-NULL
 train<- full_data %>% filter(date<ymd_hms("2019-05-31 22:30:00"))
 test<- full_data %>% filter(date>ymd_hms("2019-05-31 22:30:00"))
 
-# The date provided here to seperate the train and test dataset is 5 time periods. Where each period is 15 minutes. The dates here is based on previous assumptions.
+# The date provided here to seperate the train and test dataset is 5 time periods. Where each period is 15 minutes. The dates here is based on previous assumptions. Adjust the date accordingly in the test set to make forecasts for the testing data set. 
 
 ```
 
