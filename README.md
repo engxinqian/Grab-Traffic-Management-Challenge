@@ -2,7 +2,7 @@
 
 Hi,
 
-The file attached is the solution for the challenge. I used R to compose this solution. 
+The file attached is the solution for the challenge. I used R to compose this solution. Download the R markdown file and run the script. To get an error rate on a test set, run part 2 of the solution.
 
 The solution is divided into 2 parts, labeled as part 1 and part 2. Part 1 is the way I approached the problem, it includes some analysis and visualizations. I also generated some forecasts to get the error rate out of sample.
 
