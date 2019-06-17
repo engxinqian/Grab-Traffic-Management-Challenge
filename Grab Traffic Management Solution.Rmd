@@ -258,6 +258,8 @@ test<- full_data %>% filter(date>ymd_hms("2019-05-31 22:30:00"))
 
 # The date provided here to seperate the train and test dataset is 5 time periods. Where each period is 15 minutes. The dates here is based on previous assumptions. Adjust the date accordingly in the test set to make forecasts for the testing data set. 
 
+# For example after merging the dataset provided and the testing dataset, and this full dataset last date is "2019-06-01 23:45:00". Since you are interested in T+5, cut off the train dataset at "2019-06-01 22:30:00" and let the test dataset take observations after "2019-06-01 22:30:00". Then run the script. 
+
 ```
 
 ```{r}
